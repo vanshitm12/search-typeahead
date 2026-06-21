@@ -1,0 +1,22 @@
+=== CONSISTENT HASHING BEHAVIOUR LOG ===
+
+Setup: 3 cache nodes, 150 virtual nodes each.
+
+Key distribution across 3 nodes (3000 keys):
+  cache-node-1: 1182 keys (39.4%)
+  cache-node-2: 828 keys (27.6%)
+  cache-node-3: 990 keys (33.0%)
+
+Now ADD a 4th node (cache-node-4)...
+  Keys remapped: 1000/3000 = 33.3%
+  (Naive hash%N would remap ~75% of keys)
+
+Distribution across 4 nodes after adding:
+  cache-node-1: 427 keys (14.2%)
+  cache-node-2: 341 keys (11.4%)
+  cache-node-3: 356 keys (11.9%)
+  cache-node-4: 520 keys (17.3%)
+
+Now REMOVE cache-node-2...
+  Keys remapped: 587/3000 = 19.6%
+  Only keys that were on cache-node-2 had to move; the rest stayed put.
