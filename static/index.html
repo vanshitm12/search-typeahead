@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Typeahead · Search Suggestions</title>
+<style>
+  /* ----------------------------------------------------------------
+     Design notes (frontend-design):
+     Subject: a search system's internals made visible. The signature
+     element is the live "source + latency" badge on each query -- the UI
+     doubles as a teaching/observability surface, which fits an assignment
+     that grades you on explaining the system. Palette is an "instrument
+     panel" feel: deep ink, a single signal-cyan accent, warm paper text.
+     Type: Space Grotesk (display, technical character) + Inter (body).
+  ---------------------------------------------------------------- */
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap');
+
+  :root {
+    --ink: #0e1726;
+    --ink-2: #16223a;
+    --paper: #eef2f8;
+    --muted: #8a99b4;
+    --line: #243047;
+    --cyan: #38e1c8;
+    --cyan-dim: #1d8e80;
+    --amber: #f6b663;
+    --radius: 14px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background:
+      radial-gradient(1200px 500px at 50% -10%, #1a2740 0%, var(--ink) 60%);
+    color: var(--paper);
+    font-family: 'Inter', system-ui, sans-serif;
+    display: flex;
+    justify-content: center;
+    padding: 6vh 20px 40px;
+  }
+  .wrap { width: 100%; max-width: 680px; }
+
+  header { margin-bottom: 28px; }
+  .eyebrow {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 12px; letter-spacing: 0.22em; text-transform: uppercase;
+    color: var(--cyan); font-weight: 600; margin-bottom: 10px;
+  }
+  h1 {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 30px; font-weight: 700; margin: 0; line-height: 1.15;
+  }
+  h1 span { color: var(--muted); }
+
+  /* ---- Search box (the hero) ---- */
+  .searchbar {
+    position: relative; margin-top: 26px;
+  }
+  .searchbar input {
+    width: 100%;
+    background: var(--ink-2);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 18px 120px 18px 20px;
+    color: var(--paper);
+    font-size: 18px;
+    font-family: 'Inter', sans-serif;
+    outline: none;
+    transition: border-color .15s, box-shadow .15s;
+  }
+  .searchbar input:focus {
+    border-color: var(--cyan-dim);
+    box-shadow: 0 0 0 4px rgba(56,225,200,0.10);
+  }
+  .searchbar .go {
+    position: absolute; right: 8px; top: 8px; bottom: 8px;
+    border: none; border-radius: 10px;
+    background: var(--cyan); color: #04201c;
+    font-weight: 700; font-family: 'Space Grotesk', sans-serif;
+    padding: 0 18px; cursor: pointer; font-size: 14px;
+    letter-spacing: 0.03em;
+  }
+  .searchbar .go:hover { filter: brightness(1.08); }
+
+  /* ---- Suggestion dropdown ---- */
+  .panel {
+    margin-top: 8px;
+    background: var(--ink-2);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    overflow: hidden;
+    display: none;
+  }
+  .panel.show { display: block; }
+  .row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 18px; cursor: pointer;
+    border-bottom: 1px solid rgba(36,48,71,0.5);
+    font-size: 15px;
+  }
+  .row:last-child { border-bottom: none; }
+  .row:hover, .row.active { background: #1d2c47; }
+  .row .ico { color: var(--muted); font-size: 13px; }
+  .row mark { background: transparent; color: var(--cyan); font-weight: 600; }
+  .row .rest { color: var(--paper); }
+  .empty { padding: 16px 18px; color: var(--muted); font-size: 14px; }
+
+  /* ---- meta badge: the signature observability element ---- */
+  .meta {
+    display: flex; gap: 10px; align-items: center;
+    margin-top: 10px; font-size: 12px; color: var(--muted);
+    font-family: 'Space Grotesk', sans-serif; min-height: 18px;
+  }
+  .pill {
+    border: 1px solid var(--line); border-radius: 999px;
+    padding: 3px 10px; letter-spacing: 0.04em;
+  }
+  .pill.cache { color: var(--cyan); border-color: var(--cyan-dim); }
+  .pill.trie  { color: var(--amber); border-color: #6b5223; }
+
+  /* ---- result + trending ---- */
+  .result {
+    margin-top: 18px; padding: 14px 18px; border-radius: var(--radius);
+    background: rgba(56,225,200,0.08); border: 1px solid var(--cyan-dim);
+    font-size: 15px; display: none;
+  }
+  .result.show { display: block; }
+
+  section.trending { margin-top: 40px; }
+  .trending h2 {
+    font-family: 'Space Grotesk', sans-serif; font-size: 13px;
+    letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted);
+    font-weight: 600; margin: 0 0 14px;
+  }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip {
+    background: var(--ink-2); border: 1px solid var(--line);
+    border-radius: 999px; padding: 7px 14px; font-size: 13px;
+    cursor: pointer; color: var(--paper);
+  }
+  .chip:hover { border-color: var(--cyan-dim); color: var(--cyan); }
+  .chip .rank { color: var(--cyan); font-family: 'Space Grotesk'; margin-right: 6px; }
+
+  footer { margin-top: 36px; font-size: 12px; color: var(--muted); line-height: 1.7; }
+  footer code { color: var(--paper); background: var(--ink-2); padding: 1px 6px; border-radius: 5px; }
+  a { color: var(--cyan); }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="eyebrow">Search Typeahead System</div>
+      <h1>Start typing. <span>We'll guess the rest.</span></h1>
+    </header>
+
+    <div class="searchbar">
+      <input id="box" type="text" autocomplete="off" spellcheck="false"
+             placeholder="Try “iphone”, “python”, “nike shoes”…" aria-label="Search" />
+      <button class="go" id="go">Search</button>
+    </div>
+
+    <div class="panel" id="panel" role="listbox"></div>
+    <div class="meta" id="meta"></div>
+
+    <div class="result" id="result"></div>
+
+    <section class="trending">
+      <h2>Trending now</h2>
+      <div class="chips" id="chips"></div>
+    </section>
+
+    <footer>
+      Each suggestion shows its <strong>source</strong> —
+      <span style="color:var(--cyan)">cache</span> (served from a distributed
+      cache node) or <span style="color:var(--amber)">trie</span> (computed, then
+      cached) — and the round-trip <strong>latency</strong>. Type the same prefix
+      twice to watch a trie miss turn into a cache hit. Endpoints:
+      <code>GET /suggest</code>, <code>POST /search</code>,
+      <code>GET /trending</code>, <code>GET /cache/debug</code>,
+      <code>GET /stats</code>.
+    </footer>
+  </div>
+
+<script>
+/* =====================================================================
+   Frontend logic. Kept dependency-free and commented for the viva.
+   Key requirement satisfied here: DEBOUNCING -- we wait until the user
+   pauses typing (120ms) before calling the backend, so we don't fire a
+   request on every keystroke. This is the "avoid unnecessary backend
+   calls" requirement (section 4.1).
+===================================================================== */
+const box    = document.getElementById('box');
+const panel  = document.getElementById('panel');
+const meta   = document.getElementById('meta');
+const result = document.getElementById('result');
+const chips  = document.getElementById('chips');
+
+let activeIndex = -1;      // for keyboard navigation
+let currentItems = [];     // current suggestion strings
+let debounceTimer = null;
+
+/* ---------- debounced suggestion fetch ---------- */
+box.addEventListener('input', () => {
+  clearTimeout(debounceTimer);
+  const q = box.value;
+  // 120ms debounce: only fetch once typing pauses.
+  debounceTimer = setTimeout(() => fetchSuggestions(q), 120);
+});
+
+async function fetchSuggestions(q) {
+  try {
+    const t0 = performance.now();
+    const res = await fetch('/suggest?q=' + encodeURIComponent(q));
+    const data = await res.json();
+    renderSuggestions(data, q);
+  } catch (e) {
+    // Error state: tell the user plainly, don't fail silently.
+    panel.classList.add('show');
+    panel.innerHTML = '<div class="empty">Couldn’t reach the server. Is it running?</div>';
+    meta.innerHTML = '';
+  }
+}
+
+function renderSuggestions(data, typed) {
+  currentItems = data.suggestions || [];
+  activeIndex = -1;
+
+  if (!typed.trim()) { panel.classList.remove('show'); meta.innerHTML=''; return; }
+
+  if (currentItems.length === 0) {
+    panel.classList.add('show');
+    panel.innerHTML = '<div class="empty">No matches for “' + escapeHtml(typed) + '”.</div>';
+  } else {
+    panel.classList.add('show');
+    panel.innerHTML = currentItems.map((s, i) => {
+      // Bold the matched prefix.
+      const p = typed.trim().toLowerCase();
+      const matched = s.slice(0, p.length);
+      const rest = s.slice(p.length);
+      return `<div class="row" role="option" data-i="${i}" onclick="choose(${i})">
+        <span class="ico">↳</span>
+        <span><mark>${escapeHtml(matched)}</mark><span class="rest">${escapeHtml(rest)}</span></span>
+      </div>`;
+    }).join('');
+  }
+  // Signature badge: show source + latency.
+  const cls = data.source === 'cache' ? 'cache' : 'trie';
+  meta.innerHTML =
+    `<span class="pill ${cls}">${data.source.toUpperCase()}</span>` +
+    `<span class="pill">${data.latency_ms} ms</span>` +
+    `<span>${currentItems.length} suggestion(s)</span>`;
+}
+
+/* ---------- keyboard navigation (section 9: keyboard support) ---------- */
+box.addEventListener('keydown', (e) => {
+  const rows = [...panel.querySelectorAll('.row')];
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    activeIndex = Math.min(activeIndex + 1, rows.length - 1);
+    highlight(rows);
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    activeIndex = Math.max(activeIndex - 1, 0);
+    highlight(rows);
+  } else if (e.key === 'Enter') {
+    if (activeIndex >= 0 && currentItems[activeIndex]) {
+      choose(activeIndex);
+    } else {
+      submitSearch(box.value);
+    }
+  } else if (e.key === 'Escape') {
+    panel.classList.remove('show');
+  }
+});
+
+function highlight(rows) {
+  rows.forEach(r => r.classList.remove('active'));
+  if (activeIndex >= 0 && rows[activeIndex]) {
+    rows[activeIndex].classList.add('active');
+    box.value = currentItems[activeIndex];
+  }
+}
+
+function choose(i) {
+  box.value = currentItems[i];
+  panel.classList.remove('show');
+  submitSearch(currentItems[i]);
+}
+
+document.getElementById('go').addEventListener('click', () => submitSearch(box.value));
+
+/* ---------- submit search (POST /search) ---------- */
+async function submitSearch(q) {
+  q = (q || '').trim();
+  if (!q) return;
+  panel.classList.remove('show');
+  try {
+    const res = await fetch('/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: q })
+    });
+    const data = await res.json();   // { message: "Searched" }
+    result.classList.add('show');
+    result.innerHTML = `<strong>${escapeHtml(data.message)}</strong> — “${escapeHtml(q)}” recorded. ` +
+      `Its popularity will rise after the next batch flush.`;
+    // Refresh trending shortly after, so the effect is visible.
+    setTimeout(loadTrending, 2500);
+  } catch (e) {
+    result.classList.add('show');
+    result.innerHTML = 'Search failed — server unreachable.';
+  }
+}
+
+/* ---------- trending searches (GET /trending) ---------- */
+async function loadTrending() {
+  try {
+    const res = await fetch('/trending');
+    const data = await res.json();
+    const items = data.trending || [];
+    if (items.length === 0) {
+      chips.innerHTML = '<span style="color:var(--muted);font-size:13px">' +
+        'Nothing trending yet — submit a few searches to see this fill up.</span>';
+      return;
+    }
+    chips.innerHTML = items.map((t, i) =>
+      `<button class="chip" onclick="pick('${escapeHtml(t).replace(/'/g,"\\'")}')">` +
+      `<span class="rank">${i+1}</span>${escapeHtml(t)}</button>`
+    ).join('');
+  } catch (e) { /* keep quiet; trending is non-critical */ }
+}
+
+function pick(t) { box.value = t; submitSearch(t); }
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+loadTrending();
+</script>
+</body>
+</html>
