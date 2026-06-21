@@ -1,0 +1,12 @@
+# render.yaml — tells Render how to build and run this app.
+# Render auto-detects this file when you connect the repo.
+services:
+  - type: web
+    name: search-typeahead
+    runtime: python
+    plan: free
+    buildCommand: "pip install -r requirements.txt"
+    # $PORT is injected by Render. We bind to 0.0.0.0 so it's reachable.
+    # --timeout-keep-alive gives the 7s trie build room before health checks.
+    startCommand: "uvicorn app.api:app --host 0.0.0.0 --port $PORT"
+    healthCheckPath: /

@@ -1,0 +1,3 @@
+# Production dependencies (what the deployed app needs to run)
+fastapi>=0.110
+uvicorn>=0.27
