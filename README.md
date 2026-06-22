@@ -168,17 +168,9 @@ typeahead/
 ├── test_e2e.py                # end-to-end checks for every endpoint
 ├── benchmark.py               # produces the performance numbers
 └── docs/
-    ├── DESIGN.md              # design decisions + trade-offs
-    ├── VIVA.md                # viva prep: every concept explained
+    ├── DESIGN.md              # design decisions + trade-offs           
     └── screenshot_*.png
 ```
 
 ---
 
-## 8. Notes on AI use & understanding
-
-AI tooling was used to scaffold this project, but every module is commented to
-explain *why* it works the way it does. [`docs/VIVA.md`](docs/VIVA.md) walks
-through each concept (trie top-K, consistent hashing, recency decay, batching)
-with the exact answers to the questions the brief says you must be able to
-explain. Read it before the viva.
